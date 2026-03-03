@@ -246,22 +246,43 @@ import psutil
 import json
 import threading
 import time
+from datetime import datetime
 
 # ---------- App constants & paths ----------
 CONFIG_PATH = Path.home() / ".paul_unlocks_installer_config.json"
 LOG_DIR = Path.home() / ".paul_unlocks_installer_logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 SCRIPT_PATH = Path(__file__).expanduser().resolve()
+APP_VERSION = "1.1.0"
 
-# --- Theme (approximated from uploaded image) ---
-PRIMARY_BG = "#0b0b0b"   # near-black
-ACCENT = "#ffd600"       # yellow/gold
-ACCENT2 = "#0fbf3a"      # green
-TEXT = "#ffffff"
-BAD = "#ff4d4d"
+# --- Professional Dark Theme ---
+BG_DARK      = "#111318"   # main background
+BG_CARD      = "#1a1d24"   # card / panel background
+BG_CARD_ALT  = "#1f2229"   # slightly lighter card
+BG_INPUT     = "#252830"   # input field background
+BG_HOVER     = "#2a2d36"   # hover state
+BORDER       = "#2e3140"   # subtle borders
+BORDER_FOCUS = "#3b82f6"   # focused element accent (blue)
+ACCENT       = "#3b82f6"   # primary accent (blue)
+ACCENT_HOVER = "#2563eb"   # accent hover
+ACCENT_GREEN = "#22c55e"   # success / green
+ACCENT_GOLD  = "#f59e0b"   # gold / warning
+BAD          = "#ef4444"   # error / red
+TEXT_PRIMARY  = "#f1f5f9"  # primary text
+TEXT_SECONDARY= "#94a3b8"  # secondary / muted text
+TEXT_DIM      = "#64748b"  # dimmed text
 
 BRAND_NAME = "Paul Unlocks"
-BRAND_URL = "https://www.paulunlocks.net"
+BRAND_URL  = "https://www.paulunlocks.net"
+
+# Unicode glyphs for status indicators
+ICON_LOCK   = "\U0001F513"  # unlocked padlock
+ICON_CHECK  = "\u2713"
+ICON_CROSS  = "\u2717"
+ICON_GEAR   = "\u2699"
+ICON_DISK   = "\u25C9"
+ICON_NET    = "\u25C8"
+ICON_BOLT   = "\u26A1"
 
 # ---------- Helpers ----------
 def save_config(cfg):
@@ -368,176 +389,369 @@ class InteractiveRunner:
 class PaulUnlocksInstallerApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"{BRAND_NAME} Installer")
-        # small default window that scales
-        self.geometry("880x520")
-        self.minsize(720,420)
-        # icon path stored in config
+        self.title(f"{BRAND_NAME} Installer  v{APP_VERSION}")
+        self.geometry("960x640")
+        self.minsize(820, 540)
+        self.configure(bg=BG_DARK)
         self.cfg = load_config()
-        self.icon_path = self.cfg.get("icon_path","")
+        self.icon_path = self.cfg.get("icon_path", "")
         self.create_desktop_on_start = self.cfg.get("create_desktop_on_start", True)
+        self._log_visible = False
         self._setup_styles()
-
-        # create UI layout: left options, right monitor/progress, bottom log
         self._build_ui()
+
         self.monitor_stop = threading.Event()
         self.monitor = SystemMonitor(interval=1.0, disk_cb=self._disk_cb, net_cb=self._net_cb, stop_event=self.monitor_stop)
         self.monitor.start()
-        # runner
         self.runner = InteractiveRunner(self._append_log, self._on_cmd_fail)
 
-        # create desktop entry if requested at first run
         if self.create_desktop_on_start:
             de = create_desktop_entry(str(SCRIPT_PATH), self.icon_path)
             if de:
-                self._append_log(f"Created desktop entry: {de}\n")
+                self._append_log(f"  Desktop entry created: {de}\n")
             self.create_desktop_on_start = False
             self.cfg["create_desktop_on_start"] = False
             save_config(self.cfg)
 
+    # ── Styles ──────────────────────────────────────────────
     def _setup_styles(self):
-        style = ttk.Style(self)
+        s = ttk.Style(self)
         try:
-            style.theme_use("clam")
+            s.theme_use("clam")
         except Exception:
             pass
-        style.configure("TFrame", background=PRIMARY_BG)
-        style.configure("TLabel", background=PRIMARY_BG, foreground=TEXT)
-        style.configure("Header.TLabel", font=("Segoe UI", 14, "bold"), foreground=ACCENT)
-        style.configure("Accent.TButton", background=ACCENT, foreground=PRIMARY_BG)
-        # style for progress etc
-        style.configure("TButton", padding=6)
 
+        # Frame / background
+        s.configure("TFrame", background=BG_DARK)
+        s.configure("Card.TFrame", background=BG_CARD)
+
+        # Labels
+        s.configure("TLabel", background=BG_DARK, foreground=TEXT_PRIMARY,
+                     font=("Helvetica", 10))
+        s.configure("Card.TLabel", background=BG_CARD, foreground=TEXT_PRIMARY,
+                     font=("Helvetica", 10))
+        s.configure("CardDim.TLabel", background=BG_CARD, foreground=TEXT_SECONDARY,
+                     font=("Helvetica", 9))
+        s.configure("Header.TLabel", background=BG_DARK, foreground=TEXT_PRIMARY,
+                     font=("Helvetica", 18, "bold"))
+        s.configure("SubHeader.TLabel", background=BG_DARK, foreground=TEXT_SECONDARY,
+                     font=("Helvetica", 10))
+        s.configure("Version.TLabel", background=BG_DARK, foreground=TEXT_DIM,
+                     font=("Helvetica", 9))
+        s.configure("MonKey.TLabel", background=BG_CARD, foreground=TEXT_SECONDARY,
+                     font=("Helvetica", 9))
+        s.configure("MonVal.TLabel", background=BG_CARD, foreground=TEXT_PRIMARY,
+                     font=("Helvetica Neue", 10, "bold"))
+        s.configure("StatusOk.TLabel", background=BG_CARD, foreground=ACCENT_GREEN,
+                     font=("Helvetica", 10, "bold"))
+        s.configure("StatusBad.TLabel", background=BG_CARD, foreground=BAD,
+                     font=("Helvetica", 10, "bold"))
+        s.configure("StepLabel.TLabel", background=BG_CARD, foreground=TEXT_SECONDARY,
+                     font=("Helvetica", 9))
+
+        # LabelFrames (cards)
+        s.configure("TLabelframe", background=BG_CARD, foreground=TEXT_SECONDARY,
+                     borderwidth=1, relief="solid",
+                     font=("Helvetica", 9, "bold"))
+        s.configure("TLabelframe.Label", background=BG_CARD, foreground=TEXT_SECONDARY,
+                     font=("Helvetica", 9, "bold"))
+
+        # Buttons
+        s.configure("TButton", background=BG_CARD_ALT, foreground=TEXT_PRIMARY,
+                     borderwidth=0, padding=(14, 7),
+                     font=("Helvetica", 10))
+        s.map("TButton",
+               background=[("active", BG_HOVER), ("pressed", BORDER)],
+               foreground=[("active", TEXT_PRIMARY)])
+
+        s.configure("Accent.TButton", background=ACCENT, foreground="#ffffff",
+                     borderwidth=0, padding=(16, 8),
+                     font=("Helvetica", 10, "bold"))
+        s.map("Accent.TButton",
+               background=[("active", ACCENT_HOVER), ("pressed", "#1d4ed8")])
+
+        s.configure("Danger.TButton", background="#7f1d1d", foreground="#fca5a5",
+                     borderwidth=0, padding=(14, 7),
+                     font=("Helvetica", 9))
+        s.map("Danger.TButton",
+               background=[("active", "#991b1b")],
+               foreground=[("active", "#fecaca")])
+
+        # Combobox
+        s.configure("TCombobox", fieldbackground=BG_INPUT, background=BG_INPUT,
+                     foreground=TEXT_PRIMARY, selectbackground=ACCENT,
+                     selectforeground="#ffffff", borderwidth=1,
+                     padding=4, arrowsize=14)
+        s.map("TCombobox",
+               fieldbackground=[("readonly", BG_INPUT)],
+               foreground=[("readonly", TEXT_PRIMARY)])
+        self.option_add("*TCombobox*Listbox.background", BG_INPUT)
+        self.option_add("*TCombobox*Listbox.foreground", TEXT_PRIMARY)
+        self.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+
+        # Entry
+        s.configure("TEntry", fieldbackground=BG_INPUT, foreground=TEXT_PRIMARY,
+                     insertcolor=TEXT_PRIMARY, borderwidth=1, padding=4)
+
+        # Progressbar
+        s.configure("Custom.Horizontal.TProgressbar",
+                     troughcolor=BG_INPUT, background=ACCENT,
+                     borderwidth=0, thickness=10)
+
+        # Separator
+        s.configure("TSeparator", background=BORDER)
+
+    # ── Build UI ────────────────────────────────────────────
     def _build_ui(self):
-        # header row
-        header = ttk.Frame(self)
-        header.pack(fill="x", padx=8, pady=6)
-        # brand + icon
-        brand_lbl = ttk.Label(header, text=BRAND_NAME, style="Header.TLabel")
-        brand_lbl.pack(side="left")
-        sub_lbl = ttk.Label(header, text="Dev environment installer", foreground=ACCENT2)
-        sub_lbl.pack(side="left", padx=(8,0))
-        # icon chooser button
-        choose_icon_btn = ttk.Button(header, text="Choose icon/logo", command=self._choose_icon)
-        choose_icon_btn.pack(side="right")
-        # main frame
-        main = ttk.Frame(self)
-        main.pack(fill="both", expand=True, padx=8, pady=4)
-        main.columnconfigure(1, weight=1)
-        # left column options
-        left = ttk.Frame(main)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0,8))
+        # ── Top header bar ──
+        hdr = tk.Frame(self, bg=BG_DARK)
+        hdr.pack(fill="x", padx=20, pady=(16, 0))
+
+        brand_frame = tk.Frame(hdr, bg=BG_DARK)
+        brand_frame.pack(side="left")
+        tk.Label(brand_frame, text=f"{ICON_LOCK}  {BRAND_NAME}", bg=BG_DARK,
+                 fg=TEXT_PRIMARY, font=("Helvetica", 20, "bold")).pack(side="left")
+        tk.Label(brand_frame, text=f"  v{APP_VERSION}", bg=BG_DARK,
+                 fg=TEXT_DIM, font=("Helvetica", 10)).pack(side="left", pady=(6, 0))
+
+        right_hdr = tk.Frame(hdr, bg=BG_DARK)
+        right_hdr.pack(side="right")
+        ttk.Button(right_hdr, text=f"{ICON_GEAR}  Choose Icon",
+                   command=self._choose_icon).pack(side="right")
+
+        # tagline
+        tk.Label(self, text="Professional Development Environment Installer",
+                 bg=BG_DARK, fg=TEXT_SECONDARY,
+                 font=("Helvetica", 10)).pack(anchor="w", padx=22, pady=(2, 0))
+
+        # separator
+        sep = tk.Frame(self, bg=BORDER, height=1)
+        sep.pack(fill="x", padx=20, pady=(12, 0))
+
+        # ── Main content (PanedWindow for resizable columns) ──
+        content = tk.Frame(self, bg=BG_DARK)
+        content.pack(fill="both", expand=True, padx=20, pady=(12, 0))
+        content.columnconfigure(0, weight=0, minsize=310)
+        content.columnconfigure(1, weight=1)
+        content.rowconfigure(0, weight=1)
+
+        # ── LEFT: scrollable options column ──
+        left_outer = tk.Frame(content, bg=BG_DARK)
+        left_outer.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        left_outer.rowconfigure(0, weight=1)
+        left_outer.columnconfigure(0, weight=1)
+
+        left_canvas = tk.Canvas(left_outer, bg=BG_DARK, highlightthickness=0, width=290)
+        left_scroll = ttk.Scrollbar(left_outer, orient="vertical", command=left_canvas.yview)
+        left_canvas.configure(yscrollcommand=left_scroll.set)
+        left_canvas.grid(row=0, column=0, sticky="nsew")
+        left_scroll.grid(row=0, column=1, sticky="ns")
+
+        left = tk.Frame(left_canvas, bg=BG_DARK)
+        left_canvas.create_window((0, 0), window=left, anchor="nw")
+        left.bind("<Configure>", lambda e: left_canvas.configure(scrollregion=left_canvas.bbox("all")))
+
+        def _on_mousewheel(event):
+            left_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        left_canvas.bind_all("<MouseWheel>", _on_mousewheel)  # Windows/Mac
+        left_canvas.bind_all("<Button-4>", lambda e: left_canvas.yview_scroll(-1, "units"))
+        left_canvas.bind_all("<Button-5>", lambda e: left_canvas.yview_scroll(1, "units"))
+
+        def _card(parent, title, icon=""):
+            lf = ttk.LabelFrame(parent, text=f"  {icon}  {title}")
+            lf.pack(fill="x", pady=(0, 8), padx=(0, 4))
+            return lf
+
         # Node
-        lf_node = ttk.LabelFrame(left, text="Node (nvm) & runtime")
-        lf_node.pack(fill="x", pady=(0,8))
-        self.node_choice = tk.StringVar(value=self.cfg.get("node","lts"))
-        ttk.Label(lf_node, text="Choose Node version (nvm):").grid(row=0,column=0,sticky="w",padx=6,pady=4)
-        ttk.Combobox(lf_node, textvariable=self.node_choice, values=["none","lts","20","18","16"], width=10).grid(row=0,column=1,padx=6)
-        # Bun option
-        self.bun_choice = tk.StringVar(value="install" if self.cfg.get("install_bun", False) else "none")
-        ttk.Label(lf_node, text="Bun:").grid(row=1,column=0,sticky="w",padx=6,pady=4)
-        ttk.Combobox(lf_node, textvariable=self.bun_choice, values=["none","install"], width=10).grid(row=1,column=1,padx=6)
+        lf_node = _card(left, "Node.js Runtime", "\u2B22")
+        self.node_choice = tk.StringVar(value=self.cfg.get("node", "lts"))
+        ttk.Label(lf_node, text="Node version (nvm):", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", padx=8, pady=(6, 2))
+        ttk.Combobox(lf_node, textvariable=self.node_choice,
+                      values=["none", "lts", "22", "20", "18"], width=12,
+                      state="readonly").grid(row=0, column=1, padx=8, pady=(6, 2))
+        self.bun_choice = tk.StringVar(
+            value="install" if self.cfg.get("install_bun", False) else "none")
+        ttk.Label(lf_node, text="Bun runtime:", style="Card.TLabel").grid(
+            row=1, column=0, sticky="w", padx=8, pady=(2, 8))
+        ttk.Combobox(lf_node, textvariable=self.bun_choice,
+                      values=["none", "install"], width=12,
+                      state="readonly").grid(row=1, column=1, padx=8, pady=(2, 8))
 
         # Expo / EAS
-        lf_expo = ttk.LabelFrame(left, text="Expo / EAS")
-        lf_expo.pack(fill="x", pady=(0,8))
-        self.expo_choice = tk.StringVar(value="install" if self.cfg.get("install_expo", True) else "none")
-        self.eas_choice = tk.StringVar(value="install" if self.cfg.get("install_eas", True) else "none")
-        ttk.Label(lf_expo, text="Expo CLI:").grid(row=0,column=0,sticky="w",padx=6,pady=4)
-        ttk.Combobox(lf_expo, textvariable=self.expo_choice, values=["none","install"], width=10).grid(row=0,column=1,padx=6)
-        ttk.Label(lf_expo, text="EAS CLI:").grid(row=1,column=0,sticky="w",padx=6,pady=4)
-        ttk.Combobox(lf_expo, textvariable=self.eas_choice, values=["none","install"], width=10).grid(row=1,column=1,padx=6)
+        lf_expo = _card(left, "Expo / EAS CLI", "\u25B6")
+        self.expo_choice = tk.StringVar(
+            value="install" if self.cfg.get("install_expo", True) else "none")
+        self.eas_choice = tk.StringVar(
+            value="install" if self.cfg.get("install_eas", True) else "none")
+        ttk.Label(lf_expo, text="Expo CLI:", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", padx=8, pady=(6, 2))
+        ttk.Combobox(lf_expo, textvariable=self.expo_choice,
+                      values=["none", "install"], width=12,
+                      state="readonly").grid(row=0, column=1, padx=8, pady=(6, 2))
+        ttk.Label(lf_expo, text="EAS CLI:", style="Card.TLabel").grid(
+            row=1, column=0, sticky="w", padx=8, pady=(2, 8))
+        ttk.Combobox(lf_expo, textvariable=self.eas_choice,
+                      values=["none", "install"], width=12,
+                      state="readonly").grid(row=1, column=1, padx=8, pady=(2, 8))
 
-        # Editor selection with 'none'
-        lf_editor = ttk.LabelFrame(left, text="Editor / IDE")
-        lf_editor.pack(fill="x", pady=(0,8))
-        self.editor_choice = tk.StringVar(value=self.cfg.get("editor","vscode"))
-        ttk.Label(lf_editor, text="Choose editor:").grid(row=0,column=0,sticky="w",padx=6,pady=4)
-        ttk.Combobox(lf_editor, textvariable=self.editor_choice, values=["none","vscode","code-server","android-studio"], width=18).grid(row=0,column=1,padx=6)
-        self.android_studio_url = tk.StringVar(value=self.cfg.get("android_studio_url",""))
-        ttk.Entry(lf_editor, textvariable=self.android_studio_url, width=40).grid(row=1, column=0, columnspan=2, padx=6, pady=(4,6))
+        # Editor
+        lf_editor = _card(left, "Editor / IDE", "\u270E")
+        self.editor_choice = tk.StringVar(value=self.cfg.get("editor", "vscode"))
+        ttk.Label(lf_editor, text="Editor:", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", padx=8, pady=(6, 2))
+        ttk.Combobox(lf_editor, textvariable=self.editor_choice,
+                      values=["none", "vscode", "code-server", "android-studio"],
+                      width=16, state="readonly").grid(row=0, column=1, padx=8, pady=(6, 2))
+        self.android_studio_url = tk.StringVar(
+            value=self.cfg.get("android_studio_url", ""))
+        ttk.Label(lf_editor, text="Studio URL:", style="CardDim.TLabel").grid(
+            row=1, column=0, sticky="w", padx=8, pady=(2, 2))
+        ttk.Entry(lf_editor, textvariable=self.android_studio_url, width=28).grid(
+            row=1, column=1, padx=8, pady=(2, 8), sticky="ew")
 
-        # Java option
-        lf_java = ttk.LabelFrame(left, text="Java JDK")
-        lf_java.pack(fill="x", pady=(0,8))
-        self.java_choice = tk.StringVar(value=self.cfg.get("java_choice","openjdk-11"))
-        ttk.Combobox(lf_java, textvariable=self.java_choice, values=["none","openjdk-11","openjdk-17","openjdk-20","system-or-bundled"], width=20).pack(padx=6, pady=6)
+        # Java
+        lf_java = _card(left, "Java Development Kit", "\u2615")
+        self.java_choice = tk.StringVar(
+            value=self.cfg.get("java_choice", "openjdk-17"))
+        ttk.Combobox(lf_java, textvariable=self.java_choice,
+                      values=["none", "openjdk-11", "openjdk-17", "openjdk-20",
+                               "system-or-bundled"],
+                      width=20, state="readonly").pack(padx=8, pady=8, fill="x")
 
-        # Emulator options (with none)
-        lf_emu = ttk.LabelFrame(left, text="Android Emulator")
-        lf_emu.pack(fill="x", pady=(0,8))
-        self.local_emu = tk.StringVar(value="none" if not self.cfg.get("local_emulator", False) else "install")
-        ttk.Combobox(lf_emu, textvariable=self.local_emu, values=["none","install"], width=10).pack(padx=6, pady=(6,4))
-        self.emu_api = tk.StringVar(value=self.cfg.get("emulator_api","33"))
-        ttk.Combobox(lf_emu, textvariable=self.emu_api, values=["none","33","32","31","30","29"], width=8).pack(padx=6, pady=(0,6))
+        # Emulator
+        lf_emu = _card(left, "Android Emulator", "\u25B7")
+        self.local_emu = tk.StringVar(
+            value="none" if not self.cfg.get("local_emulator", False) else "install")
+        ttk.Label(lf_emu, text="Emulator:", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", padx=8, pady=(6, 2))
+        ttk.Combobox(lf_emu, textvariable=self.local_emu,
+                      values=["none", "install"], width=12,
+                      state="readonly").grid(row=0, column=1, padx=8, pady=(6, 2))
+        self.emu_api = tk.StringVar(value=self.cfg.get("emulator_api", "33"))
+        ttk.Label(lf_emu, text="API level:", style="Card.TLabel").grid(
+            row=1, column=0, sticky="w", padx=8, pady=(2, 8))
+        ttk.Combobox(lf_emu, textvariable=self.emu_api,
+                      values=["none", "34", "33", "32", "31", "30"],
+                      width=12, state="readonly").grid(row=1, column=1, padx=8, pady=(2, 8))
 
-        # Remove all button
-        ttk.Button(left, text="Remove all components (fresh)", command=self._confirm_remove_all).pack(fill="x", pady=(8,0), padx=6)
+        # Reset button
+        ttk.Button(left, text=f"{ICON_CROSS}  Remove All Components",
+                   style="Danger.TButton",
+                   command=self._confirm_remove_all).pack(
+            fill="x", pady=(4, 12), padx=(0, 4))
 
-        # Right column: monitor, actions, progress
-        right = ttk.Frame(main)
+        # ── RIGHT: actions, monitor, progress ──
+        right = tk.Frame(content, bg=BG_DARK)
         right.grid(row=0, column=1, sticky="nsew")
         right.rowconfigure(3, weight=1)
-        # Actions
-        actions = ttk.Frame(right)
-        actions.pack(fill="x", pady=(0,6))
-        self.start_btn = ttk.Button(actions, text="Start Install", command=self._start_install)
-        self.start_btn.pack(side="left", padx=6)
-        ttk.Button(actions, text="Save settings", command=self._save_settings).pack(side="left", padx=6)
-        ttk.Button(actions, text="Open logs folder", command=lambda: os.system(f'xdg-open "{LOG_DIR}" || true')).pack(side="left", padx=6)
-        # Progress
-        prog = ttk.LabelFrame(right, text="Progress")
-        prog.pack(fill="x", pady=(0,6))
-        self.progress = ttk.Progressbar(prog, orient="horizontal", mode="determinate")
-        self.progress.pack(fill="x", padx=8, pady=6)
-        self.step_var = tk.StringVar(value="Idle")
-        ttk.Label(prog, textvariable=self.step_var).pack(anchor="w", padx=8)
 
-        # Live monitoring panel
-        mon = ttk.LabelFrame(right, text="Live System Monitor")
-        mon.pack(fill="both", expand=False, pady=(0,6))
-        mon.columnconfigure(1, weight=1)
-        ttk.Label(mon, text="Disk use:").grid(row=0,column=0,sticky="w",padx=6,pady=4)
-        self.disk_var = tk.StringVar(value="-")
-        ttk.Label(mon, textvariable=self.disk_var).grid(row=0,column=1,sticky="w")
-        ttk.Label(mon, text="Disk IO:").grid(row=1,column=0,sticky="w",padx=6)
-        self.disk_io_var = tk.StringVar(value="-")
-        ttk.Label(mon, textvariable=self.disk_io_var).grid(row=1,column=1,sticky="w")
-        ttk.Label(mon, text="Net (Rx/Tx):").grid(row=2,column=0,sticky="w",padx=6)
-        self.net_var = tk.StringVar(value="-")
-        ttk.Label(mon, textvariable=self.net_var).grid(row=2,column=1,sticky="w")
-        ttk.Label(mon, text="Connectivity:").grid(row=3,column=0,sticky="w",padx=6)
+        # Action buttons bar
+        actions = tk.Frame(right, bg=BG_DARK)
+        actions.pack(fill="x", pady=(0, 10))
+
+        self.start_btn = ttk.Button(actions, text=f"{ICON_BOLT}  Start Install",
+                                     style="Accent.TButton",
+                                     command=self._start_install)
+        self.start_btn.pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Save Settings",
+                   command=self._save_settings).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Open Logs",
+                   command=lambda: os.system(f'xdg-open "{LOG_DIR}" || true')).pack(
+            side="left", padx=(0, 6))
+        self._log_toggle_btn = ttk.Button(actions, text="Show Log",
+                                            command=self._toggle_log)
+        self._log_toggle_btn.pack(side="left", padx=(0, 6))
+
+        # Progress card
+        prog_card = tk.Frame(right, bg=BG_CARD, padx=16, pady=12)
+        prog_card.pack(fill="x", pady=(0, 10))
+        tk.Label(prog_card, text="PROGRESS", bg=BG_CARD, fg=TEXT_DIM,
+                 font=("Helvetica", 8, "bold"), anchor="w").pack(fill="x")
+        self.progress = ttk.Progressbar(prog_card, orient="horizontal",
+                                         mode="determinate",
+                                         style="Custom.Horizontal.TProgressbar")
+        self.progress.pack(fill="x", pady=(6, 4))
+        self.step_var = tk.StringVar(value="Ready")
+        tk.Label(prog_card, textvariable=self.step_var, bg=BG_CARD,
+                 fg=TEXT_SECONDARY, font=("Helvetica", 9), anchor="w").pack(fill="x")
+
+        # System monitor card
+        mon_card = tk.Frame(right, bg=BG_CARD, padx=16, pady=12)
+        mon_card.pack(fill="x", pady=(0, 10))
+        tk.Label(mon_card, text="SYSTEM MONITOR", bg=BG_CARD, fg=TEXT_DIM,
+                 font=("Helvetica", 8, "bold"), anchor="w").pack(fill="x", pady=(0, 8))
+
+        mon_grid = tk.Frame(mon_card, bg=BG_CARD)
+        mon_grid.pack(fill="x")
+        mon_grid.columnconfigure(1, weight=1)
+        mon_grid.columnconfigure(3, weight=1)
+
+        def _mon_row(parent, row, col_offset, key_text, var_style="MonVal.TLabel"):
+            ttk.Label(parent, text=key_text, style="MonKey.TLabel").grid(
+                row=row, column=col_offset, sticky="w", padx=(0, 6), pady=2)
+            v = tk.StringVar(value="-")
+            ttk.Label(parent, textvariable=v, style=var_style).grid(
+                row=row, column=col_offset + 1, sticky="w", pady=2)
+            return v
+
+        self.disk_var    = _mon_row(mon_grid, 0, 0, f"{ICON_DISK} Disk:")
+        self.net_var     = _mon_row(mon_grid, 0, 2, f"{ICON_NET} Net:")
+        self.disk_io_var = _mon_row(mon_grid, 1, 0, "   IO:")
+        self.net_status  = _mon_row(mon_grid, 1, 2, "   Status:")
+        self.net_lbl = None  # we'll track the label for color changes
+
+        # Re-create net status with direct tk.Label for color control
+        for child in mon_grid.grid_slaves(row=1, column=3):
+            child.destroy()
         self.net_status = tk.StringVar(value="Checking...")
-        self.net_lbl = ttk.Label(mon, textvariable=self.net_status)
-        self.net_lbl.grid(row=3,column=1,sticky="w")
+        self.net_lbl = tk.Label(mon_grid, textvariable=self.net_status,
+                                 bg=BG_CARD, fg=TEXT_DIM,
+                                 font=("Helvetica Neue", 10, "bold"))
+        self.net_lbl.grid(row=1, column=3, sticky="w", pady=2)
 
-        # Collapsible log at bottom (start hidden)
-        self.log_frame = ttk.LabelFrame(self, text="Installer log (expand to view)")
-        self.log_widget = scrolledtext.ScrolledText(self.log_frame, height=14, state="disabled", wrap="word")
-        self.log_widget.pack(fill="both", expand=True, padx=4, pady=4)
+        # Log panel (initially hidden)
+        self.log_frame = tk.Frame(right, bg=BG_CARD)
+        self.log_widget = scrolledtext.ScrolledText(
+            self.log_frame, height=12, state="disabled", wrap="word",
+            bg=BG_INPUT, fg=TEXT_PRIMARY, insertbackground=TEXT_PRIMARY,
+            selectbackground=ACCENT, selectforeground="#ffffff",
+            font=("Consolas", 9), borderwidth=0, padx=8, pady=8)
+        self.log_widget.pack(fill="both", expand=True, padx=2, pady=2)
         self.log_frame.pack_forget()
-        # toggle log button
-        ttk.Button(actions, text="Show Output", command=self._toggle_log).pack(side="left", padx=6)
 
-        # start a small network connectivity checker thread
+        # ── Status bar at very bottom ──
+        status_bar = tk.Frame(self, bg=BG_CARD, height=28)
+        status_bar.pack(fill="x", side="bottom")
+        tk.Label(status_bar, text=f"  {BRAND_NAME}  |  {BRAND_URL}  |  v{APP_VERSION}",
+                 bg=BG_CARD, fg=TEXT_DIM, font=("Helvetica", 8),
+                 anchor="w").pack(side="left", padx=8, pady=4)
+
+        # start net check
         self._stop_net_check = threading.Event()
         threading.Thread(target=self._net_connectivity_loop, daemon=True).start()
 
+    # ── Utilities ───────────────────────────────────────────
     def _choose_icon(self):
-        p = filedialog.askopenfilename(title="Choose logo/icon (PNG recommended)", filetypes=[("Images","*.png;*.jpg;*.jpeg;*.ico"),("All","*.*")])
+        p = filedialog.askopenfilename(
+            title="Choose logo / icon (PNG recommended)",
+            filetypes=[("Images", "*.png;*.jpg;*.jpeg;*.ico"), ("All", "*.*")])
         if p:
             self.icon_path = p
             self.cfg["icon_path"] = p
             save_config(self.cfg)
-            # create desktop entry with this icon
             create_desktop_entry(str(SCRIPT_PATH), p)
-            self._append_log(f"Icon set and desktop entry updated: {p}\n")
+            self._append_log(f"  Icon set & desktop entry updated: {p}\n")
 
     def _toggle_log(self):
-        if self.log_frame.winfo_ismapped():
+        if self._log_visible:
             self.log_frame.pack_forget()
+            self._log_toggle_btn.configure(text="Show Log")
+            self._log_visible = False
         else:
-            self.log_frame.pack(fill="both", expand=True, padx=8, pady=(0,8))
+            self.log_frame.pack(fill="both", expand=True, pady=(0, 4))
+            self._log_toggle_btn.configure(text="Hide Log")
+            self._log_visible = True
 
     def _append_log(self, text):
         try:
@@ -550,86 +764,107 @@ class PaulUnlocksInstallerApp(tk.Tk):
 
     def _disk_cb(self, info):
         self.disk_var.set(f"{info['percent']:.1f}%")
-        self.disk_io_var.set(f"{self._format_bytes(info['read'])}/s R | {self._format_bytes(info['write'])}/s W")
+        self.disk_io_var.set(
+            f"{self._format_bytes(info['read'])}/s R  |  "
+            f"{self._format_bytes(info['write'])}/s W")
 
     def _net_cb(self, info):
-        self.net_var.set(f"{self._format_bytes(info['rx'])} / {self._format_bytes(info['tx'])}")
+        self.net_var.set(
+            f"{self._format_bytes(info['rx'])} / {self._format_bytes(info['tx'])}")
 
-    def _format_bytes(self, b):
+    @staticmethod
+    def _format_bytes(b):
         b = float(b)
-        for unit in ['B','KB','MB','GB','TB']:
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
             if abs(b) < 1024.0:
-                return f"{b:3.1f}{unit}"
+                return f"{b:3.1f} {unit}"
             b /= 1024.0
-        return f"{b:.1f}PB"
+        return f"{b:.1f} PB"
 
     def _net_connectivity_loop(self):
         while not self._stop_net_check.is_set():
-            rc, _ = run_cmd("ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; echo $?", capture=True)
+            rc, _ = run_cmd("ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; echo $?",
+                            capture=True)
             if rc == 0:
-                self.net_status.set("Online")
-                try: self.net_lbl.configure(foreground="green")
-                except: pass
+                self.net_status.set(f"{ICON_CHECK} Online")
+                try:
+                    self.net_lbl.configure(fg=ACCENT_GREEN)
+                except Exception:
+                    pass
             else:
-                self.net_status.set("No Internet")
-                try: self.net_lbl.configure(foreground=BAD)
-                except: pass
+                self.net_status.set(f"{ICON_CROSS} Offline")
+                try:
+                    self.net_lbl.configure(fg=BAD)
+                except Exception:
+                    pass
             time.sleep(3)
 
-    # Decision dialog on failed command
+    # ── Command failure dialog ──────────────────────────────
     def _on_cmd_fail(self, info):
-        cmd = info.get("cmd","")[:200]
-        rc = info.get("rc",1)
+        cmd = info.get("cmd", "")[:200]
+        rc = info.get("rc", 1)
         dlg = tk.Toplevel(self)
-        dlg.title("Command failed")
+        dlg.title("Command Failed")
+        dlg.configure(bg=BG_CARD)
+        dlg.geometry("520x200")
         dlg.grab_set()
-        ttk.Label(dlg, text=f"Command failed (exit {rc}):").pack(padx=12,pady=(8,0))
-        ttk.Label(dlg, text=cmd, wraplength=560).pack(padx=12,pady=(0,8))
+
+        tk.Label(dlg, text=f"Command exited with code {rc}",
+                 bg=BG_CARD, fg=BAD, font=("Helvetica", 11, "bold")).pack(
+            padx=16, pady=(16, 4))
+        tk.Label(dlg, text=cmd, bg=BG_CARD, fg=TEXT_SECONDARY,
+                 font=("Consolas", 9), wraplength=480, justify="left").pack(
+            padx=16, pady=(0, 12))
+
         res = {"choice": None}
+
         def ch(c):
-            res["choice"]=c; dlg.destroy()
-        frm = ttk.Frame(dlg); frm.pack(pady=8)
-        ttk.Button(frm, text="Retry", command=lambda: ch("retry")).pack(side="left", padx=6)
-        ttk.Button(frm, text="Continue (skip)", command=lambda: ch("continue")).pack(side="left", padx=6)
-        ttk.Button(frm, text="Continue Offline", command=lambda: ch("continue_offline")).pack(side="left", padx=6)
-        ttk.Button(frm, text="Abort", command=lambda: ch("abort")).pack(side="left", padx=6)
+            res["choice"] = c
+            dlg.destroy()
+
+        btn_frame = tk.Frame(dlg, bg=BG_CARD)
+        btn_frame.pack(pady=(0, 16))
+
+        for text, val, style in [
+            ("Retry", "retry", "Accent.TButton"),
+            ("Skip", "continue", "TButton"),
+            ("Continue Offline", "continue_offline", "TButton"),
+            ("Abort", "abort", "Danger.TButton"),
+        ]:
+            ttk.Button(btn_frame, text=text, style=style,
+                       command=lambda v=val: ch(v)).pack(side="left", padx=4)
+
         dlg.wait_window()
         return res["choice"] or "abort"
 
     def _save_settings(self):
-        # collect settings
         self.cfg.update({
             "node": self.node_choice.get(),
-            "install_bun": (self.bun_choice.get()=="install"),
-            "install_expo": (self.expo_choice.get()=="install"),
-            "install_eas": (self.eas_choice.get()=="install"),
+            "install_bun": (self.bun_choice.get() == "install"),
+            "install_expo": (self.expo_choice.get() == "install"),
+            "install_eas": (self.eas_choice.get() == "install"),
             "editor": self.editor_choice.get(),
             "android_studio_url": self.android_studio_url.get(),
             "java_choice": self.java_choice.get(),
-            "local_emulator": (self.local_emu.get()=="install"),
+            "local_emulator": (self.local_emu.get() == "install"),
             "emulator_api": self.emu_api.get(),
-            "icon_path": getattr(self,"icon_path","")
+            "icon_path": getattr(self, "icon_path", ""),
         })
         save_config(self.cfg)
-        self._append_log("Settings saved.\n")
+        self._append_log(f"  {ICON_CHECK} Settings saved.\n")
 
     def _start_install(self):
-        # prepare steps list based on selections (each has "none" option)
+        self.start_btn.configure(state="disabled")
         steps = []
-        steps.append(("Prereqs", self._step_prereqs))
-        # Java
+        steps.append(("System Prerequisites", self._step_prereqs))
         if self.java_choice.get() != "none":
-            steps.append(("Java", self._step_java))
-        # Node (nvm)
+            steps.append(("Java JDK", self._step_java))
         if self.node_choice.get() != "none":
-            steps.append(("Node (nvm)", self._step_nvm))
-        # Bun
+            steps.append(("Node.js (nvm)", self._step_nvm))
         if self.bun_choice.get() == "install":
-            steps.append(("Bun", self._step_bun))
-        # Expo/EAS
-        if self.expo_choice.get() == "install" or self.eas_choice.get()=="install":
-            steps.append(("Expo/EAS", self._step_expo_eas))
-        # Editor
+            steps.append(("Bun Runtime", self._step_bun))
+        if self.expo_choice.get() == "install" or self.eas_choice.get() == "install":
+            steps.append(("Expo / EAS CLI", self._step_expo_eas))
         if self.editor_choice.get() != "none":
             if self.editor_choice.get() == "vscode":
                 steps.append(("VS Code", self._step_vscode))
@@ -637,38 +872,39 @@ class PaulUnlocksInstallerApp(tk.Tk):
                 steps.append(("code-server", self._step_code_server))
             elif self.editor_choice.get() == "android-studio":
                 steps.append(("Android Studio", self._step_android_studio))
-        # emulator
         if self.local_emu.get() == "install":
-            steps.append(("KVM/QEMU", self._step_kvm))
-            steps.append(("Android SDK+Emulator", self._step_emulator))
-        # adb
+            steps.append(("KVM / QEMU", self._step_kvm))
+            steps.append(("Android SDK + Emulator", self._step_emulator))
         steps.append(("ADB (platform-tools)", self._step_adb))
-        # run steps in background
+        # show log automatically
+        if not self._log_visible:
+            self._toggle_log()
         threading.Thread(target=self._run_steps, args=(steps,), daemon=True).start()
 
     def _run_steps(self, steps):
         total = len(steps)
         self.progress["maximum"] = total
-        for i,(label,fn) in enumerate(steps, start=1):
-            self.progress["value"] = i-1
-            self.step_var.set(f"Step {i}/{total}: {label}")
-            self._append_log(f"\n== {label} ==\n")
+        for i, (label, fn) in enumerate(steps, start=1):
+            self.progress["value"] = i - 1
+            self.step_var.set(f"[{i}/{total}]  {label}")
+            self._append_log(f"\n{'='*50}\n  {ICON_BOLT} {label}\n{'='*50}\n")
             try:
-                rc = fn(self.runner)
-                # treat rc if needed
+                fn(self.runner)
             except Exception as e:
-                self._append_log(f"Exception in step {label}: {e}\n")
+                self._append_log(f"  {ICON_CROSS} Exception in {label}: {e}\n")
             self.progress["value"] = i
-        self.step_var.set("Finished")
-        # save log
+        self.step_var.set(f"{ICON_CHECK}  Installation complete")
+        self.start_btn.configure(state="normal")
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         logf = LOG_DIR / f"paul_unlocks_install_{ts}.log"
         try:
-            with open(logf,"w") as f: f.write(self.log_widget.get("1.0","end"))
-            self._append_log(f"\nLog saved to {logf}\n")
+            with open(logf, "w") as f:
+                f.write(self.log_widget.get("1.0", "end"))
+            self._append_log(f"\n  {ICON_CHECK} Log saved to {logf}\n")
         except Exception:
             pass
-        messagebox.showinfo("Installer", f"Installation finished. Log saved to {logf}")
+        messagebox.showinfo(BRAND_NAME,
+                            f"Installation finished.\nLog saved to:\n{logf}")
 
     # ---- step implementations (use runner.run) ----
     def _step_prereqs(self, runner):
@@ -758,42 +994,47 @@ class PaulUnlocksInstallerApp(tk.Tk):
     def _step_adb(self, runner):
         return runner.run('sudo apt update -y && sudo apt install -y android-tools-adb')
 
-    # ----- Remove all / fresh install button -----
+    # ── Remove all ────────────────────────────────────────────
     def _confirm_remove_all(self):
-        if not messagebox.askyesno("Confirm remove all", "This will attempt to remove packages and files installed by this installer. Continue?"):
+        if not messagebox.askyesno(
+                BRAND_NAME,
+                "This will attempt to remove all components installed by "
+                "this tool.\n\nAre you sure you want to continue?"):
             return
+        if not self._log_visible:
+            self._toggle_log()
         threading.Thread(target=self._remove_all, daemon=True).start()
 
     def _remove_all(self):
-        self._append_log("\n== Removing installed components (best-effort) ==\n")
-        # npm global packages
-        nvm_init = 'export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true'
+        self._append_log(f"\n{'='*50}\n  {ICON_CROSS} Removing installed components\n{'='*50}\n")
+        nvm_init = ('export NVM_DIR="$HOME/.nvm" && '
+                    '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true')
         cmds = [
             f'{nvm_init} && npm uninstall -g expo-cli eas-cli || true',
             'sudo apt remove --purge -y code || true',
-            'sudo apt remove --purge -y android-studio || true',  # may not be apt-installed
+            'sudo apt remove --purge -y android-studio || true',
             'sudo apt autoremove -y || true',
             'rm -rf $HOME/.bun || true',
             'rm -rf $HOME/Android || true',
             'rm -rf $HOME/.cache/bun || true',
             'rm -rf /opt/android-studio || true',
             'rm -rf $HOME/.nvm || true',
-            'rm -rf $HOME/.local/share/code-server || true'
+            'rm -rf $HOME/.local/share/code-server || true',
         ]
         for c in cmds:
             try:
-                self._append_log(f"$ {c}\n")
+                self._append_log(f"  $ {c}\n")
                 run_cmd(c, capture=False)
             except Exception as e:
-                self._append_log(f"Error removing: {e}\n")
-        self._append_log("Removal attempts finished. You may need to manually remove leftovers.\n")
-        messagebox.showinfo("Remove all", "Removal attempts finished. Check the log for details.")
+                self._append_log(f"  {ICON_CROSS} Error: {e}\n")
+        self._append_log(f"\n  {ICON_CHECK} Removal complete. Check log for details.\n")
+        messagebox.showinfo(BRAND_NAME,
+                            "Removal attempts finished.\nCheck the log for details.")
 
 # ---------- Launch ----------
 def main():
     app = PaulUnlocksInstallerApp()
-    # set window icon if available
-    icon = app.cfg.get("icon_path","")
+    icon = app.cfg.get("icon_path", "")
     if icon and Path(icon).exists():
         try:
             img = tk.PhotoImage(file=icon)
